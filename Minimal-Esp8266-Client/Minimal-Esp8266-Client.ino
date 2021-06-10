@@ -79,6 +79,8 @@ void setup() {
     pinMode(0, INPUT_PULLUP);
     
     // Connect to wifi
+    WiFi.setSleep(false);
+    WiFi.setAutoReconnect(true);
     WiFi.begin(ssid, password);
 
     // Wait some time to connect to wifi
