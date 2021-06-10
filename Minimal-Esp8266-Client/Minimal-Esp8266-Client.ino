@@ -76,6 +76,7 @@ void setup() {
     Serial.begin(115200);
 
     pinMode(LED_BUILTIN, OUTPUT);
+    pinMode(0, INPUT_PULLUP);
     
     // Connect to wifi
     WiFi.begin(ssid, password);
@@ -108,6 +109,16 @@ void loop() {
     if (millis()-time_prev > 5000) {
       time_prev = millis();
       immdyupdate = true;
+    }
+
+    if (digitalRead(0) == LOW) {
+      delay(20);
+      if (digitalRead(0) == LOW) {
+        open = !open;
+        immdyupdate = true;
+
+        while(digitalRead(0) == LOW);
+      }
     }
 
     if (immdyupdate) {
