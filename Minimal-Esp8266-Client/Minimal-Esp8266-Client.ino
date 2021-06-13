@@ -32,51 +32,134 @@ const char* password = "88888888"; //Enter Password
 const char* websockets_server_host = "172.16.6.25"; //Enter server adress
 const uint16_t websockets_server_port = 8080; // Enter server port
 long time_prev = 0;
-int nid = 20;
-char *token = "20";
+int nid = 10;
+char *token = "10";
 JSONVar p;
 bool open = false;
 bool immdyupdate = false;
+const char *url = "ws://192.168.199.199:8080/ws";
 
 using namespace websockets;
 
-void onMessageCallback(WebsocketsMessage message) {
-    Serial.print("Got Message: ");
-    Serial.println(message.data());
+class Fsm {
+public:
+  Fsm() {
+    this->_state = 0;
+    this->_needconnect = false;
+    this->_connecttime = 0;
+    this->_client.onMessage([this](WebsocketsClient&, WebsocketsMessage msg) {
+      this->on_message(msg.data());
+    });
+    this->_client.onEvent([this](WebsocketsClient&, WebsocketsEvent event, WSInterfaceString data) {
+      if(event == WebsocketsEvent::ConnectionOpened) {
+        Serial.print(this->_state);
+          Serial.println("Connnection Opened");
+          this->on_connect();
+      } else if(event == WebsocketsEvent::ConnectionClosed) {
+          Serial.println("Connnection Closed");
+          this->on_close();
+      } else if(event == WebsocketsEvent::GotPing) {
+          Serial.println("Got a Ping!");
+      } else if(event == WebsocketsEvent::GotPong) {
+          Serial.println("Got a Pong!");
+      }
+    });
+  }
 
-    JSONVar v = JSON.parse(message.data());
-    if (JSON.typeof(v) == "undefined") {
-      return;
+  void connect() {
+    if (this->_state == 0) {
+      this->_state = 1;
+      this->_needconnect = true;
+    }
+  }
+
+  void on_close() {
+    if (this->_state == 1) {
+      this->_connecttime = millis();
+    } else if (this->_state == 2) {
+      this->_state = 1;
+      this->_connecttime = millis();
+    }
+  }
+
+  void on_message(WSInterfaceString data) {
+    Serial.print(data);
+    Serial.println();
+
+    JSONVar v = JSON.parse(data);
+
+    if (this->_state == 1) {
+      // 等待登陆回包
+    } else if (this->_state == 2) {
+      if (JSON.typeof(v) == "undefined") {
+        return;
+      }
+
+      switch ((int)v["cmd"]) {
+      case 1:
+        open = true;
+        immdyupdate = true;
+        break;
+
+      case 2:
+        open = false;
+        immdyupdate = true;
+        break;
+      }
+    }
+  }
+
+  void on_connect() {
+    if (this->_state == 1) {
+      JSONVar v;
+      v["dst"] = 0;
+      v["src"] = nid;
+      v["cmd"] = 241;
+      v["payload"] = JSONVar();
+      v["payload"]["token"] = token;
+      String data = JSON.stringify(v);
+      Serial.println(data);
+      this->_client.send(data);
+      this->_state = 2;
+    }
+  }
+
+  void poll() {
+    this->_client.poll();
+
+    if (this->_connecttime > 0
+      && (millis()-this->_connecttime) > 5000) {
+      this->_connecttime = 0;
+      this->_needconnect = true;
     }
 
-    int cmd = (int)v["cmd"];
-    if (cmd == 1) {
-      open = true;
-      immdyupdate = true;
-    } else if (cmd == 2) {
-      open = false;
-      immdyupdate = true;
+    if (this->_needconnect) {
+      this->_needconnect = false;
+      bool ret = this->_client.connect(url);
+      if (!ret) {
+        this->_connecttime = millis();
+      }
+      Serial.print("connect ");
+      Serial.print(ret);
+      Serial.println();
     }
-}
+  }
 
-void onEventsCallback(WebsocketsEvent event, String data) {
-    if(event == WebsocketsEvent::ConnectionOpened) {
-        Serial.println("Connnection Opened");
-    } else if(event == WebsocketsEvent::ConnectionClosed) {
-        Serial.println("Connnection Closed");
-    } else if(event == WebsocketsEvent::GotPing) {
-        Serial.println("Got a Ping!");
-    } else if(event == WebsocketsEvent::GotPong) {
-        Serial.println("Got a Pong!");
-    }
-}
+  int _state;
+  WebsocketsClient _client;
+  bool _needconnect;
+  long _connecttime;
+};
 
-WebsocketsClient client;
+Fsm fsm;
+
 void setup() {
     Serial.begin(115200);
 
     pinMode(LED_BUILTIN, OUTPUT);
     pinMode(0, INPUT_PULLUP);
+    pinMode(16, OUTPUT);
+    digitalWrite(16, HIGH);
     
     // Connect to wifi
     WiFi.setSleep(false);
@@ -89,51 +172,36 @@ void setup() {
         delay(1000);
     }
 
-    // run callback when messages are received
-    client.onMessage(onMessageCallback);
-    
-    // run callback when events are occuring
-    client.onEvent(onEventsCallback);
-
-    // Connect to server
-    client.connect(websockets_server_host, websockets_server_port, "/ws");
-
-    // Send a message
-    client.send("{\"dst\": 0, \"src\": 20, \"cmd\": 241, \"payload\": {\"token\": \"20\"}}");
-
-    // Send a ping
-    client.ping();
+    fsm.connect();
 }
 
 void loop() {
-    client.poll();
+  fsm.poll();
 
-    if (millis()-time_prev > 5000) {
-      time_prev = millis();
-      immdyupdate = true;
+  if (millis()-time_prev > 5000) {
+    time_prev = millis();
+    immdyupdate = true;
+  }
+
+  if (immdyupdate) {
+    immdyupdate = false;
+    if (fsm._state == 2) {
+      JSONVar v;
+      v["dst"] = 1000;
+      v["src"] = nid;
+      v["cmd"] = 1;
+      v["payload"] = JSONVar();
+      v["payload"]["open"] = open;
+      String vv = JSON.stringify(v);
+      fsm._client.send(vv);
+      Serial.println(vv);
     }
+    digitalWrite(LED_BUILTIN, open ? LOW : HIGH);
+  }
 
-    if (digitalRead(0) == LOW) {
-      delay(20);
-      if (digitalRead(0) == LOW) {
-        open = !open;
-        immdyupdate = true;
-
-        while(digitalRead(0) == LOW);
-      }
-    }
-
-    if (immdyupdate) {
-      immdyupdate = false;
-      Serial.println("update");
-      p["dst"] = 1000;
-      p["src"] = nid;
-      p["cmd"] = 1; // props
-      p["payload"] = JSONVar();
-      p["payload"]["open"] = open;
-      String jsonString = JSON.stringify(p);
-      Serial.println(jsonString);
-      client.send(jsonString);
-      digitalWrite(LED_BUILTIN, open ?  LOW : HIGH);
-    }
+  if (fsm._state != 2) {
+    digitalWrite(16, (millis()%500) < 300 ? LOW : HIGH);
+  } else {
+    digitalWrite(16, HIGH);
+  }
 }
