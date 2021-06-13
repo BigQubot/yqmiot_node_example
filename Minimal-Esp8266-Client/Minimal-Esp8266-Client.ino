@@ -160,6 +160,7 @@ void setup() {
     pinMode(0, INPUT_PULLUP);
     pinMode(16, OUTPUT);
     digitalWrite(16, HIGH);
+    digitalWrite(LED_BUILTIN, HIGH);
     
     // Connect to wifi
     WiFi.setSleep(false);
@@ -181,6 +182,15 @@ void loop() {
   if (millis()-time_prev > 5000) {
     time_prev = millis();
     immdyupdate = true;
+  }
+
+  if (digitalRead(0) == LOW) {
+    delay(20);
+    if (digitalRead(0) == LOW) {
+      open = !open;
+      immdyupdate = true;
+      while(digitalRead(0) == LOW);
+    }
   }
 
   if (immdyupdate) {
