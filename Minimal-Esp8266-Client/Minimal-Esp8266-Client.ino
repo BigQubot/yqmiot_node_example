@@ -32,12 +32,12 @@ const char* password = "88888888"; //Enter Password
 const char* websockets_server_host = "172.16.6.25"; //Enter server adress
 const uint16_t websockets_server_port = 8080; // Enter server port
 long time_prev = 0;
-int nid = 10;
-char *token = "10";
+int nid = 11264;
+char *token = "5dd03d9f486669f7912ff46f96bdf7b62ffb06e9c764f9b971ddc98801b288a5";
 JSONVar p;
 bool open = false;
 bool immdyupdate = false;
-const char *url = "ws://192.168.199.199:8080/ws";
+const char *url = "ws://api.yqmiot.com/ws";
 
 using namespace websockets;
 
@@ -197,7 +197,7 @@ void loop() {
     immdyupdate = false;
     if (fsm._state == 2) {
       JSONVar v;
-      v["dst"] = 1000;
+      v["dst"] = 0x40000100;
       v["src"] = nid;
       v["cmd"] = 1;
       v["payload"] = JSONVar();
