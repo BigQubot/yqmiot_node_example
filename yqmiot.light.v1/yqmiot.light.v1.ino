@@ -1,73 +1,217 @@
+#include <Arduino_JSON.h>
+
 /*
-   Copyright (c) 2015, Majenko Technologies
-   All rights reserved.
+	Minimal Esp8266 Websockets Client
 
-   Redistribution and use in source and binary forms, with or without modification,
-   are permitted provided that the following conditions are met:
+	This sketch:
+        1. Connects to a WiFi network
+        2. Connects to a Websockets server
+        3. Sends the websockets server a message ("Hello Server")
+        4. Sends the websocket server a "ping"
+        5. Prints all incoming messages while the connection is open
 
- * * Redistributions of source code must retain the above copyright notice, this
-     list of conditions and the following disclaimer.
+    NOTE:
+    The sketch dosen't check or indicate about errors while connecting to 
+    WiFi or to the websockets server. For full example you might want 
+    to try the example named "Esp8266-Client".
 
- * * Redistributions in binary form must reproduce the above copyright notice, this
-     list of conditions and the following disclaimer in the documentation and/or
-     other materials provided with the distribution.
+	Hardware:
+        For this sketch you only need an ESP8266 board.
 
- * * Neither the name of Majenko Technologies nor the names of its
-     contributors may be used to endorse or promote products derived from
-     this software without specific prior written permission.
+	Created 15/02/2019
+	By Gil Maimon
+	https://github.com/gilmaimon/ArduinoWebsockets
 
-   THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
-   ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-   WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-   DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR
-   ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-   (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-   LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
-   ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-   (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-   SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-/* Create a WiFi access point and provide a web server on it. */
-
+#include <ArduinoWebsockets.h>
 #include <ESP8266WiFi.h>
-#include <WiFiClient.h>
-#include <ESP8266WebServer.h>
 
-#ifndef APSSID
-#define APSSID "ESPap"
-#define APPSK  "thereisnospoon"
-#endif
+const char* ssid = "HomeWifi"; //Enter SSID
+const char* password = "88888888"; //Enter Password
+const char* websockets_server_host = "172.16.6.25"; //Enter server adress
+const uint16_t websockets_server_port = 8080; // Enter server port
+long time_prev = 0;
+char *nid = "0123244824000100";
+char *token = "3909f72f112546ac";
+JSONVar p;
+bool open = false;
+bool immdyupdate = false;
+const char *url = "ws://api.yqmiot.com/ws";
 
-/* Set these to your desired credentials. */
-const char *ssid = APSSID;
-const char *password = APPSK;
+using namespace websockets;
 
-ESP8266WebServer server(80);
+class Fsm {
+public:
+  Fsm() {
+    this->_state = 0;
+    this->_needconnect = false;
+    this->_connecttime = 0;
+    this->_client.onMessage([this](WebsocketsClient&, WebsocketsMessage msg) {
+      this->on_message(msg.data());
+    });
+    this->_client.onEvent([this](WebsocketsClient&, WebsocketsEvent event, WSInterfaceString data) {
+      if(event == WebsocketsEvent::ConnectionOpened) {
+        Serial.print(this->_state);
+          Serial.println("Connnection Opened");
+          this->on_connect();
+      } else if(event == WebsocketsEvent::ConnectionClosed) {
+          Serial.println("Connnection Closed");
+          this->on_close();
+      } else if(event == WebsocketsEvent::GotPing) {
+          Serial.println("Got a Ping!");
+      } else if(event == WebsocketsEvent::GotPong) {
+          Serial.println("Got a Pong!");
+      }
+    });
+  }
 
-/* Just a little test message.  Go to http://192.168.4.1 in a web browser
-   connected to this access point to see it.
-*/
-void handleRoot() {
-  server.send(200, "text/html", "<h1>You are connected</h1>");
-}
+  void connect() {
+    if (this->_state == 0) {
+      this->_state = 1;
+      this->_needconnect = true;
+    }
+  }
+
+  void on_close() {
+    if (this->_state == 1) {
+      this->_connecttime = millis();
+    } else if (this->_state == 2) {
+      this->_state = 1;
+      this->_connecttime = millis();
+    }
+  }
+
+  void on_message(WSInterfaceString data) {
+    Serial.print(data);
+    Serial.println();
+
+    JSONVar v = JSON.parse(data);
+
+    if (this->_state == 1) {
+      // 等待登陆回包
+    } else if (this->_state == 2) {
+      if (JSON.typeof(v) == "undefined") {
+        return;
+      }
+
+      switch ((int)v["cmd"]) {
+      case 1:
+        open = true;
+        immdyupdate = true;
+        break;
+
+      case 2:
+        open = false;
+        immdyupdate = true;
+        break;
+      }
+    }
+  }
+
+  void on_connect() {
+    if (this->_state == 1) {
+      JSONVar v;
+      v["dst"] = "0000000000000000";
+      v["src"] = nid;
+      v["cmd"] = 241;
+      v["payload"] = JSONVar();
+      v["payload"]["token"] = token;
+      String data = JSON.stringify(v);
+      Serial.println(data);
+      this->_client.send(data);
+      this->_state = 2;
+    }
+  }
+
+  void poll() {
+    this->_client.poll();
+
+    if (this->_connecttime > 0
+      && (millis()-this->_connecttime) > 5000) {
+      this->_connecttime = 0;
+      this->_needconnect = true;
+    }
+
+    if (this->_needconnect) {
+      this->_needconnect = false;
+      bool ret = this->_client.connect(url);
+      if (!ret) {
+        this->_connecttime = millis();
+      }
+      Serial.print("connect ");
+      Serial.print(ret);
+      Serial.println();
+    }
+  }
+
+  int _state;
+  WebsocketsClient _client;
+  bool _needconnect;
+  long _connecttime;
+};
+
+Fsm fsm;
 
 void setup() {
-  delay(1000);
-  Serial.begin(115200);
-  Serial.println();
-  Serial.print("Configuring access point...");
-  /* You can remove the password parameter if you want the AP to be open. */
-  WiFi.softAP(ssid);
+    Serial.begin(115200);
 
-  IPAddress myIP = WiFi.softAPIP();
-  Serial.print("AP IP address: ");
-  Serial.println(myIP);
-  server.on("/", handleRoot);
-  server.begin();
-  Serial.println("HTTP server started");
+    pinMode(LED_BUILTIN, OUTPUT);
+    pinMode(0, INPUT_PULLUP);
+    pinMode(16, OUTPUT);
+    digitalWrite(16, HIGH);
+    digitalWrite(LED_BUILTIN, HIGH);
+    
+    // Connect to wifi
+    WiFi.setSleep(false);
+    WiFi.setAutoReconnect(true);
+    WiFi.begin(ssid, password);
+
+    // Wait some time to connect to wifi
+    for(int i = 0; i < 10 && WiFi.status() != WL_CONNECTED; i++) {
+        Serial.print(".");
+        delay(1000);
+    }
+
+    fsm.connect();
 }
 
 void loop() {
-  server.handleClient();
+  fsm.poll();
+
+  if (millis()-time_prev > 5000) {
+    time_prev = millis();
+    immdyupdate = true;
+  }
+
+  if (digitalRead(0) == LOW) {
+    delay(20);
+    if (digitalRead(0) == LOW) {
+      open = !open;
+      immdyupdate = true;
+      while(digitalRead(0) == LOW);
+    }
+  }
+
+  if (immdyupdate) {
+    immdyupdate = false;
+    if (fsm._state == 2) {
+      JSONVar v;
+      v["dst"] = "7ffffffffffe0100";
+      v["src"] = nid;
+      v["cmd"] = 1;
+      v["payload"] = JSONVar();
+      v["payload"]["open"] = open;
+      String vv = JSON.stringify(v);
+      fsm._client.send(vv);
+      Serial.println(vv);
+    }
+    digitalWrite(LED_BUILTIN, open ? LOW : HIGH);
+  }
+
+  if (fsm._state != 2) {
+    digitalWrite(16, (millis()%500) < 300 ? LOW : HIGH);
+  } else {
+    digitalWrite(16, HIGH);
+  }
 }
