@@ -32,12 +32,12 @@ const char* password = "88888888"; //Enter Password
 const char* websockets_server_host = "172.16.6.25"; //Enter server adress
 const uint16_t websockets_server_port = 8080; // Enter server port
 long time_prev = 0;
-char *nid = "0123244824000100";
+char *nid = "0123aa4a2e000100";
 char *token = "3909f72f112546ac";
 JSONVar p;
 bool open = false;
 bool immdyupdate = false;
-const char *url = "ws://api.yqmiot.com/ws";
+const char *url = "ws://172.16.6.25:8080/ws";
 
 using namespace websockets;
 
@@ -116,6 +116,8 @@ public:
       v["src"] = nid;
       v["cmd"] = 241;
       v["payload"] = JSONVar();
+      v["payload"]["nid"] = 0;
+      v["payload"]["nid"] = nid;
       v["payload"]["token"] = token;
       String data = JSON.stringify(v);
       Serial.println(data);
