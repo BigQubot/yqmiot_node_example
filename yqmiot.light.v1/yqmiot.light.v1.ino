@@ -47,6 +47,7 @@ public:
     this->_state = 0;
     this->_needconnect = false;
     this->_connecttime = 0;
+    this->_retry_count = 0;
     this->_client.onMessage([this](WebsocketsClient&, WebsocketsMessage msg) {
       this->on_message(msg.data());
     });
@@ -70,15 +71,22 @@ public:
     if (this->_state == 0) {
       this->_state = 1;
       this->_needconnect = true;
+      this->_retry_count = 0;
+      this->_connecttime = 0;
     }
   }
 
   void on_close() {
     if (this->_state == 1) {
-      this->_connecttime = millis();
+      int s = min((1<<this->_retry_count++), 30);
+      this->_connecttime = millis() + s * 1000;
+      Serial.print("retry ");
+      Serial.print(s);
+      Serial.println();
     } else if (this->_state == 2) {
       this->_state = 1;
-      this->_connecttime = millis();
+      this->_retry_count = 0;
+      this->_needconnect = true;
     }
   }
 
@@ -129,17 +137,23 @@ public:
   void poll() {
     this->_client.poll();
 
+    // 连接倒计时
     if (this->_connecttime > 0
-      && (millis()-this->_connecttime) > 5000) {
+      && this->_connecttime <= millis()) {
       this->_connecttime = 0;
       this->_needconnect = true;
     }
 
+    // 立即连接
     if (this->_needconnect) {
       this->_needconnect = false;
       bool ret = this->_client.connect(url);
       if (!ret) {
-        this->_connecttime = millis();
+        int s = min((1<<this->_retry_count++), 30);
+        this->_connecttime = millis() + s * 1000;
+        Serial.print("retry ");
+        Serial.print(s);
+        Serial.println();
       }
       Serial.print("connect ");
       Serial.print(ret);
@@ -151,6 +165,7 @@ public:
   WebsocketsClient _client;
   bool _needconnect;
   long _connecttime;
+  int _retry_count;
 };
 
 Fsm fsm;
@@ -175,17 +190,20 @@ void setup() {
         delay(1000);
     }
 
+    // 启动网络连接
     fsm.connect();
 }
 
 void loop() {
   fsm.poll();
 
+  // 定时触发立即上报
   if (millis()-time_prev > 5000) {
     time_prev = millis();
     immdyupdate = true;
   }
 
+  // 处理按键，切换led，并立即上报
   if (digitalRead(0) == LOW) {
     delay(20);
     if (digitalRead(0) == LOW) {
@@ -195,6 +213,7 @@ void loop() {
     }
   }
 
+  // 数据上报
   if (immdyupdate) {
     immdyupdate = false;
     if (fsm._state == 2) {
@@ -211,6 +230,7 @@ void loop() {
     digitalWrite(LED_BUILTIN, open ? LOW : HIGH);
   }
 
+  // 同步led
   if (fsm._state != 2) {
     digitalWrite(16, (millis()%500) < 300 ? LOW : HIGH);
   } else {
